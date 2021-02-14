@@ -32,6 +32,17 @@ The order of lines in the output using the parallel algorithm is nondeterministi
 cut   -f 1,3,5,7      test.tsv | sort | shasum -a 256
 ```
 
+Results:
+
+```console
+❯ ./gut -f 1,3,5,7      test.tsv | sort | shasum -a 256
+./gut -f 1,3,5,7 -p 6 test.tsv | sort | shasum -a 256
+cut   -f 1,3,5,7      test.tsv | sort | shasum -a 256
+fd6a973d1fb6c135e5fc383397a0b56e989e24302be86ec06ab4a9459d39ef1d  -
+fd6a973d1fb6c135e5fc383397a0b56e989e24302be86ec06ab4a9459d39ef1d  -
+fd6a973d1fb6c135e5fc383397a0b56e989e24302be86ec06ab4a9459d39ef1d  -
+```
+
 ## Benchmark against `cut`
 
 ```sh
