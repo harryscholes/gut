@@ -25,6 +25,7 @@ type params struct {
 	delimiter  string
 	fields     []int
 	whitespace bool
+	suppress   bool
 	parallel   int
 }
 
@@ -32,6 +33,7 @@ func NewCutter(
 	delimiter string,
 	fields string,
 	whitespace bool,
+	suppress bool,
 	parallel int,
 ) (*params, error) {
 	fieldsSlice, err := parseFields(fields)
@@ -42,6 +44,7 @@ func NewCutter(
 		delimiter:  delimiter,
 		fields:     fieldsSlice,
 		whitespace: whitespace,
+		suppress:   suppress,
 		parallel:   parallel,
 	}
 	return c, nil
@@ -60,20 +63,30 @@ func (c *params) extract() error {
 
 	for reader.Scan() {
 		line := reader.Text()
-		if c.whitespace {
-			tokens = strings.Fields(line)
-		} else {
-			tokens = strings.Split(line, c.delimiter)
-		}
 
-		if lastField >= len(tokens) {
-			return fmt.Errorf("field %d out of range in line containing %d fields", lastField+1, len(tokens))
-		}
+		switch {
+		case !strings.Contains(line, c.delimiter):
+			if c.suppress {
+				continue
+			}
+			fmt.Fprint(writer, line, "\n")
 
-		for _, field := range c.fields[:len(c.fields)-1] {
-			fmt.Fprint(writer, tokens[field], c.delimiter)
+		default:
+			if c.whitespace {
+				tokens = strings.Fields(line)
+			} else {
+				tokens = strings.Split(line, c.delimiter)
+			}
+
+			if lastField >= len(tokens) {
+				return fmt.Errorf("field %d out of range in line containing %d fields", lastField+1, len(tokens))
+			}
+
+			for _, field := range c.fields[:len(c.fields)-1] {
+				fmt.Fprint(writer, tokens[field], c.delimiter)
+			}
+			fmt.Fprint(writer, tokens[c.fields[len(c.fields)-1]], "\n")
 		}
-		fmt.Fprint(writer, tokens[c.fields[len(c.fields)-1]], "\n")
 	}
 
 	if err := reader.Err(); err != nil {
@@ -101,28 +114,41 @@ func (c *params) extractParallel() error {
 
 	g.Go(func() error {
 		for line := range in {
+			line := line
+
 			g.Go(func() error {
 				semaphore <- struct{}{}
+				defer func() {
+					<-semaphore
+				}()
 
-				var tokens []string
-				if c.whitespace {
-					tokens = strings.Fields(line)
-				} else {
-					tokens = strings.Split(line, c.delimiter)
+				switch {
+				case !strings.Contains(line, c.delimiter):
+					if c.suppress {
+						return nil
+					}
+					out <- line
+
+				default:
+					var tokens []string
+					if c.whitespace {
+						tokens = strings.Fields(line)
+					} else {
+						tokens = strings.Split(line, c.delimiter)
+					}
+
+					if lastField >= len(tokens) {
+						return fmt.Errorf("field %d out of range in line containing %d fields", lastField+1, len(tokens))
+					}
+
+					subset := make([]string, len(c.fields))
+					for i, f := range c.fields {
+						subset[i] = tokens[f]
+					}
+					joined := strings.Join(subset, c.delimiter)
+
+					out <- joined
 				}
-
-				if lastField >= len(tokens) {
-					return fmt.Errorf("field %d out of range in line containing %d fields", lastField+1, len(tokens))
-				}
-
-				subset := make([]string, len(c.fields))
-				for i, f := range c.fields {
-					subset[i] = tokens[f]
-				}
-				joined := strings.Join(subset, c.delimiter)
-
-				out <- joined
-				<-semaphore
 				return nil
 			})
 		}
@@ -181,6 +207,7 @@ func main() {
 		delimiter    string
 		fieldsString string
 		whitespace   bool
+		suppress     bool
 		parallel     int
 	)
 
@@ -208,6 +235,13 @@ func main() {
 				Usage:       "Set the field delimiter to whitespace, which overrides the delimiter option. Output fields are separated by a single space character.",
 				Destination: &whitespace,
 			},
+			&cli.BoolFlag{
+				Name:        "suppress",
+				Aliases:     []string{"s"},
+				Value:       false,
+				Usage:       "Suppress lines with no field delimiter characters. Unless specified, lines with no delimiters are passed through unmodified.",
+				Destination: &suppress,
+			},
 			&cli.IntFlag{
 				Name:        "parallel",
 				Aliases:     []string{"p"},
@@ -229,6 +263,7 @@ func main() {
 			default:
 				reader = bufio.NewScanner(os.Stdin)
 			}
+
 			writer = bufio.NewWriter(os.Stdout)
 			defer writer.Flush()
 
@@ -236,7 +271,7 @@ func main() {
 				delimiter = " "
 			}
 
-			cutter, err := NewCutter(delimiter, fieldsString, whitespace, parallel)
+			cutter, err := NewCutter(delimiter, fieldsString, whitespace, suppress, parallel)
 			if err != nil {
 				return err
 			}
