@@ -2,15 +2,14 @@ package main
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/urfave/cli/v2"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -56,6 +55,7 @@ func (c *params) cut() error {
 }
 
 func (c *params) extract() error {
+	lastField := c.fields[len(c.fields)-1]
 	var tokens []string
 
 	for reader.Scan() {
@@ -65,8 +65,9 @@ func (c *params) extract() error {
 		} else {
 			tokens = strings.Split(line, c.delimiter)
 		}
-		if len(tokens) < len(c.fields) {
-			return errors.New("Ooops")
+
+		if lastField >= len(tokens) {
+			return fmt.Errorf("field %d out of range in line containing %d fields", lastField+1, len(tokens))
 		}
 
 		for _, field := range c.fields[:len(c.fields)-1] {
@@ -82,26 +83,25 @@ func (c *params) extract() error {
 }
 
 func (c *params) extractParallel() error {
+	lastField := c.fields[len(c.fields)-1]
+
 	in := make(chan string)
 	out := make(chan string)
 	semaphore := make(chan struct{}, c.parallel)
 	done := make(chan struct{})
-	var wg sync.WaitGroup
+	var g errgroup.Group
 
-	go func() {
+	g.Go(func() error {
+		defer close(in)
 		for reader.Scan() {
 			in <- reader.Text()
 		}
-		close(in)
-	}()
+		return reader.Err()
+	})
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	g.Go(func() error {
 		for line := range in {
-			wg.Add(1)
-			go func(line string) {
-				defer wg.Done()
+			g.Go(func() error {
 				semaphore <- struct{}{}
 
 				var tokens []string
@@ -111,10 +111,9 @@ func (c *params) extractParallel() error {
 					tokens = strings.Split(line, c.delimiter)
 				}
 
-				// TODO add error handling
-				// if len(tokens) < len(c.fields) {
-				// 	return errors.New("Ooops")
-				// }
+				if lastField >= len(tokens) {
+					return fmt.Errorf("field %d out of range in line containing %d fields", lastField+1, len(tokens))
+				}
 
 				subset := make([]string, len(c.fields))
 				for i, f := range c.fields {
@@ -124,9 +123,11 @@ func (c *params) extractParallel() error {
 
 				out <- joined
 				<-semaphore
-			}(line)
+				return nil
+			})
 		}
-	}()
+		return nil
+	})
 
 	go func() {
 		for joined := range out {
@@ -135,13 +136,13 @@ func (c *params) extractParallel() error {
 		done <- struct{}{}
 	}()
 
-	wg.Wait()
+	err := g.Wait()
+	if err != nil {
+		return err
+	}
 	close(out)
 	<-done
 
-	if err := reader.Err(); err != nil {
-		return err
-	}
 	return nil
 }
 
