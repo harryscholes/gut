@@ -1,6 +1,6 @@
 # gut
 
-`cut` clone in Go
+Clone of `cut` implemented in Go
 
 ```sh
 ./gut -d "," -f 1,2,3-5 -s -p 10 in.csv
