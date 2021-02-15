@@ -118,9 +118,6 @@ func (c *params) extractParallel() error {
 
 			g.Go(func() error {
 				semaphore <- struct{}{}
-				defer func() {
-					<-semaphore
-				}()
 
 				switch {
 				case !strings.Contains(line, c.delimiter):
@@ -149,6 +146,8 @@ func (c *params) extractParallel() error {
 
 					out <- joined
 				}
+
+				<-semaphore
 				return nil
 			})
 		}
