@@ -58,7 +58,7 @@ func (c *params) cut() error {
 }
 
 func (c *params) extract() error {
-	lastField := c.fields[len(c.fields)-1]
+	lastField := max(c.fields)
 	var tokens []string
 
 	for reader.Scan() {
@@ -96,7 +96,7 @@ func (c *params) extract() error {
 }
 
 func (c *params) extractParallel() error {
-	lastField := c.fields[len(c.fields)-1]
+	lastField := max(c.fields)
 
 	in := make(chan string)
 	out := make(chan string)
@@ -199,6 +199,16 @@ func parseFields(s string) ([]int, error) {
 		}
 	}
 	return fields, nil
+}
+
+func max(s []int) int {
+	var m int
+	for _, e := range s {
+		if e > m {
+			m = e
+		}
+	}
+	return m
 }
 
 func main() {
